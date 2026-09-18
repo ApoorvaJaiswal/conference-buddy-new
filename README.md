@@ -10,20 +10,15 @@ America 2026, using the actual agenda, in four executable sections.
 | Section | Adds | deepagents surface |
 |---|---|---|
 | 0 | setup + smoke test | `create_deep_agent` |
-| 1 | the real agenda | `tools=` |
+| 1 | the real agenda, and a tool you write | `tools=` |
 | 2 | a plan that persists | `backend=`, `TodoListMiddleware` |
 | 3 | research → analysis → synthesis | `subagents=` |
-| 4 | memory and approval gates | `memory=`, `interrupt_on=` |
-| 5 | surviving failure | `ToolRetryMiddleware`, `ModelFallbackMiddleware`, `ModelCallLimitMiddleware` |
-| 6 | seeing what it did | `debug=`, token accounting, LangSmith |
-| 7 | skills | `skills=`, `SKILL.md` |
-| 8 | where files live | `StoreBackend`, `CompositeBackend`, `store=` |
-| 9 | permissions and MCP | `permissions=`, MCP tools |
-| 10 | chain vs LangGraph vs DeepAgents | — |
+| 4 | memory and approval gates | `memory=`, `interrupt_on=`, `checkpointer=` |
+| 5 | skills | `skills=`, `SKILL.md` |
+| 6 | tools you did not write | MCP |
 
-Budgeted for a 120-minute slot and it is tight. Sections 8, 9 and 10 compress
-most easily if you are running late; 5 and 6 are what the abstract promises, so
-cut those last.
+Roughly 100 minutes of material in a 120-minute slot. Nothing is left as an
+exercise: every cell is run in the room.
 
 **Every section runs directly after section 0.** Each one re-imports what it
 needs, so you can skip any section, run them out of order, or recover from a dead

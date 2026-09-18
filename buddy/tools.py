@@ -217,6 +217,9 @@ def check_plan(session_ids: list[str]) -> str:
 def refresh_agenda() -> str:
     """Re-fetch the agenda from wearedevelopers.com and reload it.
 
+    Not exercised by the notebook, but shipped because a buddy running during a
+    live event needs it: the program is still being finalised and times move.
+
     Use when the user suspects the data is stale, or after a failure that might
     have been caused by a bad cache. This hits the network and can genuinely
     fail; the failure is returned as text, not raised.

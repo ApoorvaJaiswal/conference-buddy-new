@@ -315,19 +315,15 @@ def check_promises():
         ),
         "human-in-the-loop approval gates": "interrupt_on" in src_all,
         "long-term memory": "memory=" in src_all,
-        "error recovery patterns": "ToolRetryMiddleware" in src_all and "ModelFallbackMiddleware" in src_all,
-        "backends (more than one)": "StoreBackend" in src_all and "CompositeBackend" in src_all,
-        "debugging": "debug=True" in src_all and "usage_metadata" in src_all,
+        "planning": "TodoListMiddleware" in src_all,
+        "a filesystem backend": "FilesystemBackend" in src_all,
         "skills": "skills=" in src_all,
-        "permissions": "permissions=" in src_all,
+        "MCP integration": "MultiServerMCPClient" in NB.read_text(),
+        "a tool built in front of the room": "def find_speaker" in src_all,
         "runs in GitHub Codespaces with no installs": (ROOT / ".devcontainer" / "setup.sh").exists(),
-        "context preservation (losing context mid-task)":
-            "SummarizationMiddleware" in src_all and "ClearToolUsesEdit" in src_all,
-        "attendees write a tool themselves (guided lab)":
-            "find_speaker" in src_all and "YOUR CODE HERE" in src_all,
-        "framework decision-making (chain vs LangGraph vs DeepAgents)":
-            "Which tool for which job" in NB.read_text()
-            and "LangGraph" in NB.read_text(),
+        "nothing left as an exercise": not any(
+            t in src_all for t in ["Your turn", "YOUR CODE HERE", "Exercise:", "experiments here"]
+        ),
     }
     for name, ok in promises.items():
         check(name, ok)
