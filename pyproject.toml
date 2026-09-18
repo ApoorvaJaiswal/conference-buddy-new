@@ -1,0 +1,24 @@
+[project]
+name = "wad-conference-buddy"
+version = "0.1.0"
+description = "Workshop: building a conference buddy with deepagents"
+requires-python = ">=3.11"
+dependencies = [
+    "deepagents>=0.7",
+    "langchain>=1.0",
+    "python-dotenv>=1.0",
+]
+
+[project.optional-dependencies]
+anthropic = ["langchain-anthropic>=1.0"]
+openai = ["langchain-openai>=1.0"]
+google = ["langchain-google-genai>=2.0"]
+# Codespaces installs this one so any attendee's key works without a rebuild.
+all-providers = [
+    "langchain-anthropic>=1.0",
+    "langchain-openai>=1.0",
+    "langchain-google-genai>=2.0",
+]
+
+[tool.setuptools.packages.find]
+include = ["buddy*"]
