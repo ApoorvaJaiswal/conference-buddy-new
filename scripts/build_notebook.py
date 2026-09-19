@@ -131,15 +131,33 @@ nb.reset_workspace()
 
 print(f"Environment: {'GitHub Codespaces' if IN_CODESPACES else 'local / hosted'}")
 print(f"Model:       {MODEL}")
-print(f"Agenda from: {data.fetched_at()}")
-print(f"Sessions:    {len(data.sessions())} "
-      f"({len(data.scheduled())} with a published time, "
-      f"{len(data.unscheduled())} without)")
-print(f"Days:        {', '.join(data.days()) or 'none'}")
-print(f"Tracks:      {len(data.tracks())}   Stages: {len(data.stages())}")
-print("Pages read:")
-for src in json.loads(open("data/sessions.json").read())["sources"]:
-    print(f"  {src}")
+agenda = Path("data/sessions.json")
+if not agenda.exists():
+    print()
+    print("  No agenda data. The fetch failed and there is no cached copy.")
+    print("  See why:   python scripts/fetch_agenda.py --check")
+    print("  Then:      re-run this cell.")
+else:
+    raw = json.loads(agenda.read_text())
+    if raw.get("parse_health") == "suspect":
+        print()
+        print("  WARNING: the scrape failed its own sanity checks.")
+        for p in raw.get("parse_problems", []):
+            print(f"    - {p}")
+        print("  The buddy will warn about this too. Investigate with:")
+        print("    python scripts/inspect_session.py <session-id>")
+        print()
+    print(f"Agenda from: {data.fetched_at()}")
+    print(f"Sessions:    {len(data.sessions())} "
+          f"({len(data.scheduled())} with a published time, "
+          f"{len(data.unscheduled())} without)")
+    print(f"Days:        {', '.join(data.days()) or 'none'}")
+    print(f"No day:      {sum(1 for s in data.sessions() if s.get('scheduled') and not s.get('day'))}"
+          "  (should be 0 - the site publishes a day for every session)")
+    print(f"Tracks:      {len(data.tracks())}   Stages: {len(data.stages())}")
+    print("Pages read:")
+    for src in raw["sources"]:
+        print(f"  {src}")
 """)
 
 code("""

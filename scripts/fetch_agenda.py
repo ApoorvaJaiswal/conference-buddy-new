@@ -647,16 +647,34 @@ def main() -> int:
         print("\n  PARSE LOOKS WRONG:", file=sys.stderr)
         for p in problems:
             print(f"    - {p}", file=sys.stderr)
-        print(
-            "\n  The site's markup has probably changed. Raw HTML is in data/raw/ .\n"
-            "  Refusing to overwrite good data with a bad parse.",
-            file=sys.stderr,
+        print("\n  The site's markup has probably changed. Raw HTML is in data/raw/ .",
+              file=sys.stderr)
+
+        if OUT.exists():
+            print("  Keeping the existing agenda rather than overwriting it with this.",
+                  file=sys.stderr)
+            return 2
+
+        # No cache to fall back on. Writing nothing means no workshop at all, so
+        # write it and mark it suspect - the tools tell users the data may be wrong.
+        print("  No cached agenda exists, so writing this one marked SUSPECT.\n"
+              "  The buddy will warn users that its data may be wrong.", file=sys.stderr)
+        payload["parse_health"] = "suspect"
+        payload["parse_problems"] = problems
+        payload["caveats"].insert(
+            0,
+            "THIS AGENDA MAY BE WRONG. The scrape failed its own sanity checks: "
+            + "; ".join(problems)
+            + ". Tell the user this before relying on any time or day.",
         )
-        return 2
+    else:
+        payload["parse_health"] = "ok"
+        payload["parse_problems"] = []
 
     if args.check:
-        print("\n  --check: parse is healthy, nothing written.")
-        return 0
+        print("\n  --check: nothing written. "
+              f"parse_health={payload.get('parse_health', 'ok')}")
+        return 2 if problems else 0
 
     tmp = OUT.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n")

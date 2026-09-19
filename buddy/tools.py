@@ -32,7 +32,15 @@ def agenda_status() -> str:
     """
     all_s = data.sessions()
     sched = data.scheduled()
-    lines = [
+    lines = []
+    if data.parse_health() == "suspect":
+        lines += [
+            "*** WARNING: this agenda failed its own sanity checks. ***",
+            "Times and days may be wrong. Say so before the user relies on any of it.",
+            *[f"  - {p}" for p in data.parse_problems()],
+            "",
+        ]
+    lines += [
         f"Agenda fetched: {data.fetched_at()}",
         f"Sessions known: {len(all_s)} ({len(sched)} with a published time, "
         f"{len(all_s) - len(sched)} without)",

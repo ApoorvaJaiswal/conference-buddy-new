@@ -125,8 +125,22 @@ def check_data():
     fetcher = (ROOT / "scripts" / "fetch_agenda.py").read_text()
     check("fetcher records which URLs it read", '"sources": sorted(pages)' in fetcher)
     check(
-        "fetcher refuses to overwrite good data with a bad parse",
-        "Refusing to overwrite good data" in fetcher and "def validate(" in fetcher,
+        "fetcher keeps a good cache rather than overwriting with a bad parse",
+        "Keeping the existing agenda" in fetcher and "def validate(" in fetcher,
+    )
+    check(
+        "a failed parse with no cache still writes, marked suspect",
+        'payload["parse_health"] = "suspect"' in fetcher,
+    )
+    nb_src = NB.read_text()
+    check(
+        "notebook setup cell survives a missing agenda",
+        "No agenda data. The fetch failed" in nb_src
+        and 'json.loads(open("data/sessions.json")' not in nb_src,
+    )
+    check(
+        "notebook reports sessions with a time but no day",
+        "should be 0 - the site publishes a day for every session" in nb_src,
     )
     check(
         "fetcher only reads wearedevelopers.com",

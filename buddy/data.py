@@ -28,6 +28,14 @@ def event() -> dict:
     return _load()["event"]
 
 
+def parse_health() -> str:
+    return _load().get("parse_health", "unknown")
+
+
+def parse_problems() -> list[str]:
+    return _load().get("parse_problems", [])
+
+
 def caveats() -> list[str]:
     return _load().get("caveats", [])
 
