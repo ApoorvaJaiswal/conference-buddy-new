@@ -1,0 +1,37 @@
+{
+  "name": "Conference Buddy Workshop",
+  "image": "mcr.microsoft.com/devcontainers/python:3.11-bookworm",
+  "onCreateCommand": "bash .devcontainer/setup.sh",
+  "postCreateCommand": "bash .devcontainer/setup.sh",
+  "postAttachCommand": { "verify": "bash .devcontainer/verify.sh" },
+  "waitFor": "postCreateCommand",
+  "secrets": {
+    "ANTHROPIC_API_KEY": {
+      "description": "Anthropic API key. Leave blank if you are using another provider.",
+      "documentationUrl": "https://console.anthropic.com/settings/keys"
+    },
+    "OPENAI_API_KEY": {
+      "description": "OpenAI API key. Only needed if BUDDY_MODEL is an openai: model."
+    },
+    "GOOGLE_API_KEY": {
+      "description": "Google AI Studio key. Only needed if BUDDY_MODEL is a google_genai: model."
+    },
+    "BUDDY_MODEL": {
+      "description": "Optional. Defaults to anthropic:claude-sonnet-4-6."
+    }
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "ms-toolsai.jupyter",
+        "ms-toolsai.jupyter-renderers"
+      ],
+      "settings": {
+        "notebook.output.textLineLimit": 200,
+        "files.exclude": { "**/__pycache__": true, "**/*.egg-info": true }
+      }
+    }
+  },
+  "hostRequirements": { "cpus": 2, "memory": "4gb" }
+}
