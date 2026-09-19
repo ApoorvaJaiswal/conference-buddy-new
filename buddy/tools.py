@@ -54,6 +54,7 @@ def list_program() -> str:
             f"Dates: {', '.join(ev['dates'])}",
             f"Days with published session times: {', '.join(data.days()) or 'none'}",
             f"Tracks: {'; '.join(data.tracks()) or 'none published'}",
+            f"Formats: {'; '.join(data.formats()) or 'none published'}",
             f"Stages: {'; '.join(data.stages()) or 'none published'}",
         ]
     )
@@ -66,6 +67,7 @@ def search_sessions(
     track: str = "",
     stage: str = "",
     topic: str = "",
+    session_format: str = "",
     scheduled_only: bool = False,
     limit: int = 12,
 ) -> str:
@@ -77,6 +79,10 @@ def search_sessions(
         track: exact track name (see list_program).
         stage: exact stage name (see list_program).
         topic: exact topic tag (e.g. "Agentic AI", "LangChain").
+        session_format: exact format, e.g. "Workshop", "Masterclass", "Session",
+            "Start-up Presentation". Call list_program for the ones in this agenda.
+            Workshops and masterclasses often require pre-registration; say so when
+            you recommend one.
         scheduled_only: if true, return only sessions with a published time.
         limit: maximum results.
 
@@ -94,6 +100,8 @@ def search_sessions(
             continue
         if topic and topic.lower() not in [t.lower() for t in s.get("topics", [])]:
             continue
+        if session_format and (s.get("format") or "").lower() != session_format.lower():
+            continue
         if scheduled_only and not s.get("scheduled"):
             continue
 
@@ -102,6 +110,7 @@ def search_sessions(
                 s.get("title") or "",
                 s.get("abstract") or "",
                 s.get("track") or "",
+                s.get("format") or "",
                 " ".join(s.get("topics", [])),
                 " ".join(p.get("name") or "" for p in s.get("speakers", [])),
                 " ".join(p.get("company") or "" for p in s.get("speakers", [])),
@@ -151,6 +160,8 @@ def get_session(session_id: str) -> str:
         f"Format: {s.get('format') or 'not published'}"
         + (f" ({s['duration_minutes']} min)" if s.get("duration_minutes") else ""),
         f"Topics: {', '.join(s.get('topics', [])) or 'not published'}",
+        ("Pre-registration required: yes" if s.get("requires_registration")
+         else "Pre-registration required: not indicated"),
         f"Speakers:\n{speakers}",
         f"Abstract: {s.get('abstract') or 'not published'}",
         f"URL: {s.get('url') or 'not published'}",

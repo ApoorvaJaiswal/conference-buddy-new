@@ -91,6 +91,8 @@ FORMAT = re.compile(
 )
 
 # The event's own track labels, as they appear on the schedule page.
+PREREG = re.compile(r"pre-?registration\s+required", re.I)
+
 KNOWN_TRACKS = [
     "AI Agents", "AI Engineering", "AI Models & Infrastructure", "AI Trust & Safety",
     "Applied AI", "Architecture & Backend", "Career, Culture & Community",
@@ -205,6 +207,7 @@ def parse_sessions_page(html: str) -> dict[str, dict]:
             "speakers": [],
             "abstract": None,
             "topics": [],
+            "requires_registration": bool(PREREG.search(block)),
         }
 
         fmt = FORMAT.search(block)
@@ -313,6 +316,7 @@ def parse_schedule_page(html: str) -> dict[str, dict]:
 
         prior = [iso for offset, iso in headings if offset <= pos]
         out[sid] = {
+            "requires_registration": bool(PREREG.search(text)) or None,
             "day": prior[-1] if prior else None,
             "start": _to_24h(times.group(1)),
             "end": _to_24h(times.group(2)),
@@ -379,6 +383,7 @@ def build(pages: dict[str, str]) -> dict:
             "title_from_slug": True,
             "format": None, "duration_minutes": None,
             "speakers": [], "abstract": None, "topics": [],
+            "requires_registration": False,
         }
 
     records = []
@@ -391,6 +396,9 @@ def build(pages: dict[str, str]) -> dict:
                 "end": slot.get("end"),
                 "stage": slot.get("stage"),
                 "track": record.get("track") or slot.get("track"),
+                "requires_registration": bool(
+                    record.get("requires_registration") or slot.get("requires_registration")
+                ),
                 "scheduled": bool(slot.get("start")),
             }
         )

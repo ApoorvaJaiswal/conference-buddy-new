@@ -9,7 +9,7 @@ SESSIONS_HTML = """
 <div>Topics</div><ul><li>Agents</li><li>Agentic AI</li><li>Docker</li></ul>
 <a href="BASE/manufacturing-trust-speed-and-safety-in-the-age-of-agents-1318895">View Session Details</a></li>
 
-<li><div>Workshop (120 min)</div>
+<li><div>Workshop (120 min)</div><div>Pre-registration required</div>
 <div>DeepAgents: Build Multi-Agent AI Systems That Actually Work</div>
 <div>Apoorva Jaiswal &middot; Applied AI/ML Lead at JPMorgan Chase, Anjana Umapathy &middot; Applied AI/ML Lead &amp; VP at JPMorgan Chase</div>
 <p>DeepAgents is a new LangChain framework built to solve exactly these problems, covering intelligent delegation, advanced planning, robust context preservation, and error recovery designed for production-grade workflows in a hands-on setting.</p>

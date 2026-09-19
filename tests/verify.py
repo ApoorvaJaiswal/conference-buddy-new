@@ -378,6 +378,14 @@ def check_tool_honesty():
         plan = check_plan.invoke({"session_ids": ["999999"]})
         check("check_plan flags unscheduled instead of assuming", "NO PUBLISHED TIME" in plan, plan[:90])
         check("check_plan states travel time is unknown", "not published anywhere" in plan)
+        from buddy.tools import search_sessions, list_program
+        ws = search_sessions.invoke({"session_format": "Workshop"})
+        check("workshops findable by format filter", "Workshop" in ws and "No sessions" not in ws, ws[:80])
+        check("workshops findable by free-text query",
+              "No sessions" not in search_sessions.invoke({"query": "workshop"}))
+        check("pre-registration surfaced", "PRE-REGISTRATION REQUIRED" in ws, ws[:80])
+        check("list_program advertises available formats", "Formats:" in list_program.invoke({}))
+
         status = agenda_status.invoke({})
         check("agenda_status lists its own gaps", "Known gaps" in status)
     finally:

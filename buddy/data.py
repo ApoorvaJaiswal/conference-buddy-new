@@ -60,6 +60,10 @@ def stages() -> list[str]:
     return sorted({s["stage"] for s in sessions() if s.get("stage")})
 
 
+def formats() -> list[str]:
+    return sorted({s["format"] for s in sessions() if s.get("format")})
+
+
 def topics() -> list[str]:
     return sorted({t for s in sessions() for t in s.get("topics", [])})
 
@@ -102,7 +106,10 @@ def one_line(session: dict) -> str:
     if session.get("track"):
         bits.append(f"| {session['track']}")
     if session.get("format"):
-        bits.append(f"| {session['format']}")
+        dur = f" {session['duration_minutes']}min" if session.get("duration_minutes") else ""
+        bits.append(f"| {session['format']}{dur}")
+    if session.get("requires_registration"):
+        bits.append("| PRE-REGISTRATION REQUIRED")
     title = session.get("title") or "(untitled)"
     if session.get("title_from_slug"):
         title += " (title derived from URL; no detail page found)"

@@ -227,6 +227,20 @@ print(search_sessions.invoke({"query": "agents security", "limit": 6}))
 """)
 
 md("""
+The program is not all 30-minute talks. Workshops, masterclasses, start-up
+presentations and side events are separate formats, scraped from their own pages,
+and most workshops need **pre-registration** - turning up on the day is not
+enough. The tools surface both, because an itinerary that sends someone to a full
+workshop they cannot enter is worse than no itinerary.
+""")
+
+code("""
+print(list_program.invoke({}).splitlines()[-1])        # which formats exist
+print()
+print(search_sessions.invoke({"session_format": "Workshop", "limit": 6}))
+""")
+
+md("""
 ### A sixth tool, built the same way
 
 You have read five tools. Here is a sixth, so the pattern is concrete rather than
