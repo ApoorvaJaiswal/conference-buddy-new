@@ -375,10 +375,39 @@ def check_tool_honesty():
         from buddy.tools import get_session, check_plan, agenda_status
         detail = get_session.invoke({"session_id": "999999"})
         check("get_session says 'time not yet published'", "not yet published" in detail, detail[:80])
+        # A session with a time but no day must be refused, not silently planned.
+        undated = dict(payload["sessions"][0])
+        undated.update({"id": "888888", "scheduled": True, "day": None,
+                        "start": "13:15", "end": "15:15", "day_conflict": True})
+        payload["sessions"].append(undated)
+        (ROOT / "data" / "sessions.json").write_text(json.dumps(payload))
+        data.reload()
+        undated_plan = check_plan.invoke({"session_ids": ["888888"]})
+        check("check_plan refuses to place a day-unknown session",
+              "DAY UNKNOWN" in undated_plan and "do NOT place" in undated_plan,
+              undated_plan[:100])
+        check("the skill carries the same rule",
+              "DAY UNKNOWN" in (ROOT / "seed/skills/build-my-schedule/SKILL.md").read_text())
+
         plan = check_plan.invoke({"session_ids": ["999999"]})
         check("check_plan flags unscheduled instead of assuming", "NO PUBLISHED TIME" in plan, plan[:90])
         check("check_plan states travel time is unknown", "not published anywhere" in plan)
         from buddy.tools import search_sessions, list_program
+
+        # Regression: a Day 0 workshop listed under a Day 2 heading must never be
+        # confidently placed on Day 2.
+        from tests.fixture import WORKSHOPS_HTML
+        merged = fa.build({
+            f"{fa.BASE}/agenda/sessions": SESSIONS_HTML,
+            f"{fa.BASE}/agenda/schedule": SCHEDULE_HTML,
+            f"{fa.BASE}/agenda/workshops": WORKSHOPS_HTML,
+        })
+        ws = next(x for x in merged["sessions"] if x["id"] == "1196173")
+        check("a row's own date attribute beats a misleading heading above it",
+              ws["day"] == "2026-09-23", f"day={ws['day']}")
+        other = next(x for x in merged["sessions"] if x["id"] == "1306074")
+        check("a row does not steal the next row's date",
+              other["day"] == "2026-09-25", f"day={other['day']}")
         ws = search_sessions.invoke({"session_format": "Workshop"})
         check("workshops findable by format filter", "Workshop" in ws and "No sessions" not in ws, ws[:80])
         check("workshops findable by free-text query",

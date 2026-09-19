@@ -154,9 +154,15 @@ so agents are verified to construct, not to answer well), and VS Code extension
 installation in a cold codespace. Those need:
 
 ```bash
-python scripts/fetch_agenda.py --check    # parses the live site, writes nothing
-python scripts/diagnose_schedule.py       # where the unreachable days live
+python scripts/fetch_agenda.py --check       # parses the live site, writes nothing
+python scripts/diagnose_schedule.py          # where the unreachable days live
+python scripts/inspect_session.py 1196173    # where one session's date lives in the markup
 ```
+
+**If `--check` reports any "timed but no day", that is a parser bug, not missing
+data.** The site publishes a day for every session. Run `inspect_session.py` on
+one of them to see whether the date is in a `<time>` tag, a `data-` attribute, or
+a heading, and adjust `DATE_ATTR` / `DATE_MARK` in `scripts/fetch_agenda.py`.
 
 ## Facilitator notes
 

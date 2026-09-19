@@ -23,3 +23,8 @@ ask one question covering all of them rather than three separate questions.
 - Every slot gets a named backup.
 - Room-to-room travel time is not published. Never claim a transition is
   comfortable or tight; say the distance is unknown.
+- A session can have a published time but no reliable date. `check_plan` reports
+  these as DAY UNKNOWN. Never put one in a day file. List them under
+  "Not scheduled yet" with their time, and say the date needs confirming.
+- Workshops and masterclasses usually require pre-registration. Say so every time
+  you recommend one, and say it again in the summary.

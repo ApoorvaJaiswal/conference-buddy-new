@@ -38,3 +38,20 @@ SCHEDULE_HTML = """
 1:15 PM&ndash;3:15 PM Stage 9 Workshop <b>DeepAgents: Build Multi-Agent AI Systems That Actually Work</b> AI Agents Apoorva Jaiswal</a>
 </body></html>
 """.replace("BASE", BASE).replace("&ndash;", "\u2013")
+
+# Regression: the workshops grid stacks programmes, so a Day 0 workshop can sit
+# physically below a Day 2 heading. Position-based day inference put the
+# DeepAgents workshop (really Wed 23 Sep) on Friday. It must come back either
+# correct or unknown - never confidently wrong.
+WORKSHOPS_HTML = """
+<html><body>
+<h2>Day 2 &middot; Fri, Sep 25</h2>
+<a href="BASE/some-friday-workshop-1306074">
+1:15 PM&ndash;3:15 PM Stage 8 Workshop <b>From Signal to Action</b> DevOps &amp; Platform Engineering</a>
+
+<h2>Workshops &amp; Masterclasses</h2>
+<div class="row"><time datetime="2026-09-23T13:15:00-07:00">Wed 1:15 PM</time>
+<a href="BASE/deepagents-build-multi-agent-ai-systems-that-actually-work-1196173">
+1:15 PM&ndash;3:15 PM Stage 9 Workshop <b>DeepAgents: Build Multi-Agent AI Systems That Actually Work</b> AI Agents Pre-registration required</a></div>
+</body></html>
+""".replace("BASE", BASE).replace("&ndash;", "\u2013")

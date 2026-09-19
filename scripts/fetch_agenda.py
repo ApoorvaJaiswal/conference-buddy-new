@@ -107,6 +107,46 @@ DAYS = {
     "day 2": "2026-09-25",
 }
 
+# Explicit calendar dates are far safer section markers than "Day N", which also
+# appears in nav, tab labels and body copy. Order matters: longest first.
+DATE_MARK = re.compile(
+    r"(?:\b(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)[a-z]*,?\s*)?"
+    r"(?:(2026-09-2[345])"
+    r"|(?:Sep(?:t(?:ember)?)?\.?\s*(2[345]))"
+    r"|(?:(2[345])\s*Sep(?:t(?:ember)?)?))",
+    re.I,
+)
+ISO_FOR_DOM = {"23": "2026-09-23", "24": "2026-09-24", "25": "2026-09-25"}
+
+# The date is usually in markup, not in visible text: <time datetime="...">,
+# data-date, data-day. Tag stripping threw these away, which is why day
+# detection was falling back to guessing from nearby headings.
+DATE_ATTR = re.compile(
+    r"""(?:datetime|data-date|data-day|data-start|data-start-time|content)\s*=\s*"""
+    r"""["']([^"']*2026-09-2[345][^"']*)["']""",
+    re.I,
+)
+
+
+def _date_from_attrs(fragment: str) -> str | None:
+    """Pull an ISO date out of any date-bearing attribute in this fragment."""
+    m = DATE_ATTR.search(fragment)
+    if m:
+        d = re.search(r"2026-09-2[345]", m.group(1))
+        if d:
+            return d.group(0)
+    return None
+
+
+def _date_marks(html: str) -> list[tuple[int, str]]:
+    """Offsets of explicit date markers in the raw HTML, in document order."""
+    out = []
+    for m in DATE_MARK.finditer(html):
+        iso = m.group(1) or ISO_FOR_DOM.get(m.group(2) or m.group(3) or "")
+        if iso:
+            out.append((m.start(), iso))
+    return out
+
 
 # ── fetching ────────────────────────────────────────────────────────────────
 
@@ -174,17 +214,27 @@ ANCHOR = re.compile(
 )
 
 
-def _anchor_texts(html: str) -> dict[str, tuple[str, int]]:
+def _anchor_texts(html: str) -> dict[str, tuple[str, int, str]]:
     """Schedule page: time, stage and track live INSIDE the anchor text.
 
-    Returns id -> (text, position). Position is the offset in the raw HTML, used
-    to work out which day heading the row falls under.
+    Returns id -> (visible_text, position, raw_row). The raw row keeps the markup
+    so date attributes can be read; the visible text is for the human-readable
+    fields.
     """
-    found: dict[str, tuple[str, int]] = {}
-    for m in ANCHOR.finditer(html):
+    matches = list(ANCHOR.finditer(html))
+    found: dict[str, tuple[str, int, str]] = {}
+    for i, m in enumerate(matches):
         sid, text = m.group(1), visible_text(m.group(2))
+        # Context either side, so a <time> tag just outside the anchor still
+        # counts - but never past a neighbouring row, or a row steals the next
+        # row's date. (This exact leak sent a Friday workshop to Wednesday.)
+        # In these layouts the date/time markup PRECEDES its link, so look
+        # backwards to the previous row and not one character forwards. Looking
+        # forward steals the next row's <time> and shifts it a day.
+        lo = matches[i - 1].end() if i else 0
+        raw = html[max(lo, m.start() - 2000):m.end()]
         if sid not in found or len(text) > len(found[sid][0]):
-            found[sid] = (text, m.start())
+            found[sid] = (text, m.start(), raw)
     return found
 
 
@@ -296,28 +346,53 @@ def _abstract_from_block(block: str) -> str | None:
 def parse_schedule_page(html: str) -> dict[str, dict]:
     """Day, start, end, stage, track for sessions the page actually renders.
 
-    Anything the page does not render (Friday's conference program is built
-    client-side) simply does not appear here, and stays unscheduled downstream.
+    Day assignment is the dangerous part. These pages stack several programmes on
+    one document, so "the nearest preceding heading" silently mislabels anything
+    that appears after an unrelated section - a Day 0 workshop listed below the
+    Day 1 programme inherits Day 1.
+
+    So: prefer explicit calendar dates over "Day N" labels, and only accept a
+    marker that is reasonably close to the session. When nothing qualifies, the
+    day is None. A session with a time but no day is honest; a session on the
+    wrong day is not.
     """
-    # Day headings, located in the raw HTML so offsets line up with anchors.
-    headings = sorted(
+    dates = _date_marks(html)
+    fallback = sorted(
         (m.start(), DAYS[re.sub(r"\s+", " ", m.group(1)).lower()])
         for m in re.finditer(r"\b(Day\s*[012])\b", html, re.I)
-    )
+    ) if not dates else []
+
+    marks = dates or fallback
+    MAX_DISTANCE = 30_000   # chars; beyond this the marker is a different section
 
     out: dict[str, dict] = {}
-    for sid, (text, pos) in _anchor_texts(html).items():
+    for sid, (text, pos, raw) in _anchor_texts(html).items():
         times = TIME_RANGE.search(text)
         if not times:
             continue
 
+        # Best evidence first: a date attribute on this row, then a date in the
+        # row's own text, then the nearest preceding section marker.
+        day = _date_from_attrs(raw)
+        inline = _date_marks(text) if not day else None
+        if day:
+            pass
+        elif inline:
+            day = inline[0][1]
+        else:
+            prior = [(off, iso) for off, iso in marks if off <= pos]
+            day = None
+            if prior:
+                off, iso = prior[-1]
+                if pos - off <= MAX_DISTANCE:
+                    day = iso
+
         stage = STAGE.search(text)
         track = next((t for t in KNOWN_TRACKS if t in text), None)
 
-        prior = [iso for offset, iso in headings if offset <= pos]
         out[sid] = {
             "requires_registration": bool(PREREG.search(text)) or None,
-            "day": prior[-1] if prior else None,
+            "day": day,
             "start": _to_24h(times.group(1)),
             "end": _to_24h(times.group(2)),
             "stage": stage.group(1).strip() if stage else None,
@@ -357,15 +432,25 @@ def build(pages: dict[str, str]) -> dict:
                 details[sid] = record
 
     times: dict[str, dict] = {}
+    conflicts: set[str] = set()
     for url in GRID_PAGES:
         html = pages.get(url)
         if not html:
             continue
         for sid, slot in parse_schedule_page(html).items():
-            if sid in times:
-                merge(times[sid], slot)
-            else:
+            if sid not in times:
                 times[sid] = slot
+                continue
+            seen, new = times[sid].get("day"), slot.get("day")
+            if seen and new and seen != new:
+                # Two pages disagree about which day this runs. Neither is
+                # trustworthy, so record none and say so.
+                conflicts.add(sid)
+                times[sid]["day"] = None
+                slot = {k: v for k, v in slot.items() if k != "day"}
+            merge(times[sid], slot)
+    for sid in conflicts:
+        times[sid]["day"] = None
 
     # A session can appear in a grid but have no card anywhere.
     all_slugs: dict[str, str] = {}
@@ -399,6 +484,7 @@ def build(pages: dict[str, str]) -> dict:
                 "requires_registration": bool(
                     record.get("requires_registration") or slot.get("requires_registration")
                 ),
+                "day_conflict": sid in conflicts,
                 "scheduled": bool(slot.get("start")),
             }
         )
@@ -429,6 +515,9 @@ def build(pages: dict[str, str]) -> dict:
             "No floor plan or walking-distance data is published, so the buddy "
             "cannot judge whether a room-to-room transition is feasible.",
             "No difficulty levels are published.",
+            "A session with a time but no day means the source pages disagreed or "
+            "gave no reliable date marker. It is reported as unknown rather than "
+            "guessed.",
         ],
         "sessions": records,
     }
@@ -452,6 +541,17 @@ def validate(payload: dict) -> list[str]:
 
     if not any(s["speakers"] for s in sessions):
         problems.append("no speakers parsed on any session")
+
+    dated = [s for s in sessions if s.get("day")]
+    if len(sessions) >= 40 and dated:
+        spread = {s["day"] for s in dated}
+        if len(spread) < 2:
+            problems.append(
+                f"every dated session landed on {spread.pop()} - day detection is wrong"
+            )
+        biggest = max(sum(1 for s in dated if s["day"] == d) for d in spread)
+        if biggest > len(dated) * 0.9:
+            problems.append("over 90% of sessions on one day - day detection is suspect")
 
     bad_times = [
         s for s in scheduled
@@ -478,6 +578,12 @@ def summarise(payload: dict) -> str:
     ]
     for day in sorted(by_day):
         lines.append(f"    {day}: {by_day[day]}")
+    undated = [s for s in sessions if s.get("scheduled") and not s.get("day")]
+    lines.append(f"  timed but no day: {len(undated)}")
+    if undated:
+        lines.append("    ^ the site publishes a day for every session, so any number")
+        lines.append("      here means the parser missed it. Run:")
+        lines.append(f"        python scripts/inspect_session.py {undated[0]['id']}")
     stages = sorted({s["stage"] for s in sessions if s["stage"]})
     lines.append(f"  stages seen     : {', '.join(stages) or 'none'}")
     return "\n".join(lines)

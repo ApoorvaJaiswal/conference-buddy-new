@@ -36,6 +36,8 @@ def agenda_status() -> str:
         f"Agenda fetched: {data.fetched_at()}",
         f"Sessions known: {len(all_s)} ({len(sched)} with a published time, "
         f"{len(all_s) - len(sched)} without)",
+        f"Of those, {sum(1 for s in all_s if s.get('scheduled') and not s.get('day'))} "
+        f"have a time but no reliable date - never place these in a day plan",
         "Days with published times: " + (", ".join(data.days()) or "none"),
         "",
         "Known gaps and caveats:",
@@ -178,19 +180,22 @@ def get_session(session_id: str) -> str:
 def check_plan(session_ids: list[str]) -> str:
     """Check a draft schedule for time clashes.
 
-    Only compares sessions that have published times. Anything unscheduled is
-    reported separately as uncheckable rather than assumed fine.
+    Only compares sessions that have both a published time AND a known day.
+    Anything missing either is reported separately as uncheckable rather than
+    assumed fine. Never put a day-unknown session into a specific day's plan.
 
     This cannot tell you whether a transition between two rooms is physically
     possible: the conference publishes no floor plan or walking distances.
     """
-    picked, missing, unscheduled = [], [], []
+    picked, missing, unscheduled, undated = [], [], [], []
     for sid in session_ids:
         s = data.by_id(sid)
         if not s:
             missing.append(sid)
         elif not s.get("scheduled"):
             unscheduled.append(s)
+        elif not s.get("day"):
+            undated.append(s)          # has a time, but which day is unknown
         else:
             picked.append(s)
 
@@ -199,6 +204,13 @@ def check_plan(session_ids: list[str]) -> str:
         notes.append(f"Unknown session IDs: {', '.join(missing)}")
     for s in unscheduled:
         notes.append(f"NO PUBLISHED TIME, cannot check: [{s['id']}] {s.get('title')}")
+    for s in undated:
+        why = ("the source pages disagreed about the date"
+               if s.get("day_conflict") else "no reliable date was published")
+        notes.append(
+            f"DAY UNKNOWN ({why}), do NOT place this in a day plan: "
+            f"[{s['id']}] {s.get('title')} at {s['start']}-{s['end']}"
+        )
 
     picked.sort(key=lambda s: (s.get("day") or "", data.to_minutes(s["start"])))
     clashes = []

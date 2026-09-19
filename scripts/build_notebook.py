@@ -369,7 +369,9 @@ read it. When you learn something durable about them, write it there.
 When you build a schedule:
   1. Break the work into todos first.
   2. Search per day and per interest, not in one giant query.
-  3. Run check_plan on your picks before writing anything down.
+  3. Run check_plan on your picks before writing anything down. If it reports
+     DAY UNKNOWN for a session, that session must NOT go into a day file - the
+     source pages disagreed about its date. List it separately and say so.
   4. Write one file per day. Each entry: time, ID, title, stage, one line on why it
      fits, and a named backup session for that slot.
   5. Only then summarise for the user, briefly. The detail lives in the files.\"\"\"
@@ -512,7 +514,9 @@ speaker-scout.
 You keep: the attendee's profile, the final decisions, conflict checking via
 check_plan, and the files under /plan/ and /profile.md.
 
-Never write a schedule you have not run through check_plan.\"\"\"
+Never write a schedule you have not run through check_plan. Never place a session
+it flags as DAY UNKNOWN into a specific day, and always mention pre-registration
+when you recommend a workshop or masterclass.\"\"\"
 
 buddy_v3 = create_deep_agent(
     model=MODEL,
