@@ -125,6 +125,26 @@ writing. Run `python scripts/diagnose_schedule.py` to see where the remaining da
 lives — it checks whether the other days are embedded in script payloads or behind
 an API call.
 
+### Where dates come from
+
+The grid pages (`/agenda/schedule`, `/agenda/workshops`, …) do **not** carry a
+reliable per-row date: rows inherit whatever section heading sits above them, so a
+Wednesday workshop listed under a Friday heading reads as Friday. Each session's
+own detail page does carry it, one session per page, so that is the source of
+truth for dates.
+
+That costs one request per session, so it is cached in `data/day_cache.json`,
+fetched 8 at a time, and expires after 7 days. First run takes about a minute;
+every run after that is instant. The cache is baked into a Codespaces prebuild,
+so attendees never pay for it.
+
+```bash
+python scripts/fetch_agenda.py --refresh-days   # ignore the cache, refetch dates
+```
+
+`data/day_cache.json` is the one file under `data/` that git does not ignore —
+commit it and a cold clone is instant too.
+
 **Nothing is invented.** Where the site doesn't publish a field it stays `None`
 and the tools report "not published". Three gaps are real and permanent until the
 organisers change something:

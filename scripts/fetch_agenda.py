@@ -40,6 +40,7 @@ ROOT = Path(__file__).resolve().parent.parent
 DATA = ROOT / "data"
 RAW = DATA / "raw"
 OUT = DATA / "sessions.json"
+DAY_CACHE = DATA / "day_cache.json"
 
 BASE = "https://www.wearedevelopers.com/world-congress-north-america"
 SESSIONS_URL = f"{BASE}/agenda/sessions"
@@ -446,39 +447,99 @@ def day_from_detail_page(html: str) -> str | None:
     )
 
 
-def resolve_days_from_details(records: list[dict], only_missing: bool = True,
-                              limit: int = 400, pause: float = 0.1) -> int:
-    """Fill in days by visiting each session's own page. Returns how many it fixed.
+DAY_CACHE_MAX_AGE_DAYS = 7
 
-    Costs one request per session, so it is used as a fallback rather than the
-    default path: when the grid pages produce no day, or produce an obviously
-    wrong one (everything on a single day).
+
+def _load_day_cache() -> dict[str, str]:
+    """Cached id -> date, ignored once stale.
+
+    Dates are stable, but not guaranteed: an organiser can move a session. An
+    expiry means a cache committed to the repo cannot quietly serve a wrong date
+    for the rest of the event.
     """
-    import time as _time
+    try:
+        blob = json.loads(DAY_CACHE.read_text())
+        stamp = datetime.fromisoformat(blob["updated"])
+        age = (datetime.now(timezone.utc) - stamp).days
+        if age > DAY_CACHE_MAX_AGE_DAYS:
+            print(f"  day cache is {age} days old; refetching dates")
+            return {}
+        return blob.get("days", {})
+    except Exception:
+        return {}
 
-    todo = [
-        r for r in records
-        if r.get("url") and (not only_missing or not r.get("day"))
-    ][:limit]
+
+def _save_day_cache(days: dict[str, str]) -> None:
+    DAY_CACHE.parent.mkdir(parents=True, exist_ok=True)
+    DAY_CACHE.write_text(
+        json.dumps(
+            {"updated": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+             "days": days},
+            indent=2,
+        )
+        + "\n"
+    )
+
+
+def resolve_days_from_details(records: list[dict], refresh: bool = False,
+                              workers: int = 8) -> int:
+    """Authoritative day for each session, from its own detail page.
+
+    The grid pages do not carry a reliable per-row date; detail pages do, because
+    each describes exactly one session. So this is the primary source of truth for
+    dates, not a fallback.
+
+    It is cached in data/day_cache.json and fetched concurrently, so the cost is
+    paid once (at container build, baked into a prebuild) rather than on every
+    refresh. Session dates do not move; new sessions are picked up automatically
+    because only ids missing from the cache are fetched.
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    cache = {} if refresh else _load_day_cache()
+
+    # Apply what we already know, for free.
+    from_cache = 0
+    todo = []
+    for rec in records:
+        cached = cache.get(rec["id"])
+        if cached:
+            rec["day"] = cached
+            rec["day_source"] = "detail-page (cached)"
+            from_cache += 1
+        elif rec.get("url"):
+            todo.append(rec)
+
+    if from_cache:
+        print(f"  {from_cache} session dates from cache")
     if not todo:
-        return 0
+        return from_cache
 
-    print(f"  resolving {len(todo)} session dates from their own pages...")
-    fixed = 0
-    for i, rec in enumerate(todo, 1):
+    print(f"  fetching {len(todo)} new session dates ({workers} at a time)...")
+
+    def one(rec):
         try:
-            day = day_from_detail_page(fetch(rec["url"], timeout=20))
+            return rec, day_from_detail_page(fetch(rec["url"], timeout=20))
         except Exception:
-            continue
-        if day:
-            rec["day"] = day
-            rec["day_source"] = "detail-page"
-            fixed += 1
-        if i % 25 == 0:
-            print(f"    {i}/{len(todo)} ({fixed} resolved)")
-        _time.sleep(pause)
-    print(f"  resolved {fixed}/{len(todo)} from detail pages")
-    return fixed
+            return rec, None
+
+    fixed = 0
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = [pool.submit(one, r) for r in todo]
+        for i, fut in enumerate(as_completed(futures), 1):
+            rec, day = fut.result()
+            if day:
+                rec["day"] = day
+                rec["day_source"] = "detail-page"
+                cache[rec["id"]] = day
+                fixed += 1
+            if i % 50 == 0 or i == len(todo):
+                print(f"    {i}/{len(todo)} ({fixed} resolved)")
+
+    _save_day_cache(cache)
+    print(f"  cached {len(cache)} dates in {DAY_CACHE.name}; "
+          f"future runs will not refetch these")
+    return from_cache + fixed
 
 
 def merge(into: dict, extra: dict) -> dict:
@@ -695,9 +756,8 @@ def main() -> int:
     ap.add_argument("--force", action="store_true", help="refetch even if fresh")
     ap.add_argument("--check", action="store_true", help="parse and report, write nothing")
     ap.add_argument("--offline", action="store_true", help="never hit the network")
-    ap.add_argument("--resolve-days", action="store_true",
-                    help="always confirm every date from its session detail page "
-                         "(one request per session, slow but authoritative)")
+    ap.add_argument("--refresh-days", action="store_true",
+                    help="ignore data/day_cache.json and refetch every session date")
     args = ap.parse_args()
 
     if args.offline:
@@ -736,21 +796,21 @@ def main() -> int:
     payload = build(pages)
     problems = validate(payload)
 
-    # The grid pages stack several programmes per document, so their day markers
-    # are unreliable. If the result looks wrong, resolve dates from each session's
-    # own page instead, which describes exactly one session.
-    day_trouble = [p for p in problems if "day detection" in p or "no day" in p]
-    if (day_trouble or args.resolve_days) and not args.offline:
-        print("\n  day detection looks unreliable; falling back to detail pages")
-        for p in day_trouble:
-            print(f"    - {p[:100]}")
-        only_missing = not bool([p for p in problems if "day detection is wrong" in p])
-        fixed = resolve_days_from_details(payload["sessions"], only_missing=only_missing)
-        if fixed:
-            payload["sessions"].sort(
-                key=lambda r: (r["day"] or "9999", r["start"] or "99:99", r["stage"] or "~")
-            )
-            problems = validate(payload)
+    # The grid pages do not carry a reliable per-row date: rows inherit whatever
+    # section heading happens to sit above them. Detail pages do carry it, one
+    # session per page, so they are the source of truth. Cached, so this costs
+    # nothing after the first run.
+    if not args.offline:
+        print("\n  resolving session dates (detail pages are authoritative)")
+        for rec in payload["sessions"]:
+            # Drop the grid's guess; a cached or freshly fetched date replaces it.
+            if rec.get("day_source") != "detail-page":
+                rec["day"] = None
+        resolve_days_from_details(payload["sessions"], refresh=args.refresh_days)
+        payload["sessions"].sort(
+            key=lambda r: (r["day"] or "9999", r["start"] or "99:99", r["stage"] or "~")
+        )
+        problems = validate(payload)
 
     print("\n" + summarise(payload))
 

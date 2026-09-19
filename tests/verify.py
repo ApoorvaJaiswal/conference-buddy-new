@@ -32,6 +32,14 @@ BUILTIN = set(dir(builtins)) | {"__name__", "_"}
 PASS, FAIL = [], []
 
 
+def _ctx_redirect():
+    """Silence a noisy helper while still letting it run."""
+    import contextlib
+    import io
+
+    return contextlib.redirect_stdout(io.StringIO())
+
+
 def check(name: str, ok: bool, detail: str = "") -> None:
     (PASS if ok else FAIL).append((name, detail))
     mark = "\033[32m ok \033[0m" if ok else "\033[31mFAIL\033[0m"
@@ -414,6 +422,47 @@ def check_tool_honesty():
           f"{len(payload['sessions'])} parsed")
     check("parser assigns real times and stages",
           any(s["scheduled"] and s["stage"] for s in payload["sessions"]))
+    # Date resolution: detail pages are authoritative, and must be cached so the
+    # cost is paid once rather than on every fetch.
+    import json as _json
+    from datetime import datetime as _dt, timezone as _tz, timedelta as _td
+
+    calls = {"n": 0}
+    def _fake(url, timeout=20):
+        calls["n"] += 1
+        return '<script type="application/ld+json">{"startDate":"2026-09-23T09:00"}</script>'
+    real_fetch, fa.fetch = fa.fetch, _fake
+    fa.DAY_CACHE.parent.mkdir(parents=True, exist_ok=True)
+    fa.DAY_CACHE.unlink(missing_ok=True)
+    try:
+        recs = lambda: [{"id": str(i), "url": f"http://x/{i}", "day": None} for i in range(3)]
+        with _ctx_redirect():
+            fa.resolve_days_from_details(recs())
+        cold = calls["n"]
+        calls["n"] = 0
+        with _ctx_redirect():
+            fa.resolve_days_from_details(recs())
+        warm = calls["n"]
+        check("detail-page dates are cached (second run makes no requests)",
+              cold == 3 and warm == 0, f"cold={cold} warm={warm}")
+
+        calls["n"] = 0
+        with _ctx_redirect():
+            fa.resolve_days_from_details(recs(), refresh=True)
+        check("--refresh-days bypasses the cache", calls["n"] == 3, f"{calls['n']} calls")
+
+        stale = (_dt.now(_tz.utc) - _td(days=30)).isoformat()
+        fa.DAY_CACHE.write_text(_json.dumps({"updated": stale, "days": {"0": "2026-09-23"}}))
+        with _ctx_redirect():
+            used = len(fa._load_day_cache())
+        check("a stale day cache is ignored", used == 0, f"{used} entries used")
+
+        fa.DAY_CACHE.write_text("{ corrupt")
+        check("a corrupt day cache does not crash", fa._load_day_cache() == {})
+    finally:
+        fa.fetch = real_fetch
+        fa.DAY_CACHE.unlink(missing_ok=True)
+
     check("validation gates reject a thin parse", bool(fa.validate(payload)),
           "a small parse should fail the 40-session gate")
 
