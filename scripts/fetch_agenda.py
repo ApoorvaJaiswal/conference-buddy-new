@@ -128,6 +128,22 @@ DATE_ATTR = re.compile(
 )
 
 
+# schema.org Event markup, if the site emits it, is the most reliable signal of
+# all: an unambiguous ISO date rather than a layout convention we have to infer.
+JSONLD_DATE = re.compile(
+    r'"(?:startDate|start_date|startTime|date)"\s*:\s*"([^"]*2026-09-2[345][^"]*)"', re.I
+)
+
+
+def _date_from_jsonld(fragment: str) -> str | None:
+    m = JSONLD_DATE.search(fragment)
+    if m:
+        d = re.search(r"2026-09-2[345]", m.group(1))
+        if d:
+            return d.group(0)
+    return None
+
+
 def _date_from_attrs(fragment: str) -> str | None:
     """Pull an ISO date out of any date-bearing attribute in this fragment."""
     m = DATE_ATTR.search(fragment)
@@ -373,7 +389,7 @@ def parse_schedule_page(html: str) -> dict[str, dict]:
 
         # Best evidence first: a date attribute on this row, then a date in the
         # row's own text, then the nearest preceding section marker.
-        day = _date_from_attrs(raw)
+        day = _date_from_jsonld(raw) or _date_from_attrs(raw)
         inline = _date_marks(text) if not day else None
         if day:
             pass
@@ -390,11 +406,18 @@ def parse_schedule_page(html: str) -> dict[str, dict]:
         stage = STAGE.search(text)
         track = next((t for t in KNOWN_TRACKS if t in text), None)
 
+        try:
+            start, end = _to_24h(times.group(1)), _to_24h(times.group(2))
+        except ValueError:
+            # A single unparseable time must not abort the whole page. Skip the
+            # row; it comes through as unscheduled, which the tools handle.
+            continue
+
         out[sid] = {
             "requires_registration": bool(PREREG.search(text)) or None,
             "day": day,
-            "start": _to_24h(times.group(1)),
-            "end": _to_24h(times.group(2)),
+            "start": start,
+            "end": end,
             "stage": stage.group(1).strip() if stage else None,
             "track": track,
         }
@@ -406,6 +429,56 @@ def _to_24h(value: str) -> str:
 
 
 # ── assembly and validation ─────────────────────────────────────────────────
+
+
+def day_from_detail_page(html: str) -> str | None:
+    """Find the date on a single session's own page.
+
+    Tried in order of reliability: schema.org JSON-LD, date-bearing attributes,
+    then an explicit date in the visible text. A detail page describes exactly one
+    session, so there is no neighbouring row to steal a date from - which is what
+    makes this the reliable fallback when the grid pages defeat us.
+    """
+    return (
+        _date_from_jsonld(html)
+        or _date_from_attrs(html)
+        or (lambda m: m[0][1] if m else None)(_date_marks(visible_text(html)))
+    )
+
+
+def resolve_days_from_details(records: list[dict], only_missing: bool = True,
+                              limit: int = 400, pause: float = 0.1) -> int:
+    """Fill in days by visiting each session's own page. Returns how many it fixed.
+
+    Costs one request per session, so it is used as a fallback rather than the
+    default path: when the grid pages produce no day, or produce an obviously
+    wrong one (everything on a single day).
+    """
+    import time as _time
+
+    todo = [
+        r for r in records
+        if r.get("url") and (not only_missing or not r.get("day"))
+    ][:limit]
+    if not todo:
+        return 0
+
+    print(f"  resolving {len(todo)} session dates from their own pages...")
+    fixed = 0
+    for i, rec in enumerate(todo, 1):
+        try:
+            day = day_from_detail_page(fetch(rec["url"], timeout=20))
+        except Exception:
+            continue
+        if day:
+            rec["day"] = day
+            rec["day_source"] = "detail-page"
+            fixed += 1
+        if i % 25 == 0:
+            print(f"    {i}/{len(todo)} ({fixed} resolved)")
+        _time.sleep(pause)
+    print(f"  resolved {fixed}/{len(todo)} from detail pages")
+    return fixed
 
 
 def merge(into: dict, extra: dict) -> dict:
@@ -524,39 +597,58 @@ def build(pages: dict[str, str]) -> dict:
 
 
 def validate(payload: dict) -> list[str]:
-    """Gates that must pass before this is allowed to replace a good data file."""
-    sessions = payload["sessions"]
+    """Gates that must pass before this is allowed to replace a good data file.
+
+    Must never raise: it runs on exactly the malformed input it exists to catch,
+    so every field access here is defensive.
+    """
+    sessions = payload.get("sessions") or []
     problems = []
 
     if len(sessions) < 40:
         problems.append(f"only {len(sessions)} sessions parsed (expected 40+)")
 
-    titled = [s for s in sessions if s["title"]]
-    if len(titled) < len(sessions) * 0.8:
+    titled = [s for s in sessions if s.get("title")]
+    if sessions and len(titled) < len(sessions) * 0.8:
         problems.append(f"only {len(titled)}/{len(sessions)} sessions got a title")
 
-    scheduled = [s for s in sessions if s["scheduled"]]
+    scheduled = [s for s in sessions if s.get("scheduled")]
     if len(scheduled) < 20:
         problems.append(f"only {len(scheduled)} sessions have times (expected 20+)")
 
-    if not any(s["speakers"] for s in sessions):
+    if not any(s.get("speakers") for s in sessions):
         problems.append("no speakers parsed on any session")
 
     dated = [s for s in sessions if s.get("day")]
     if len(sessions) >= 40 and dated:
-        spread = {s["day"] for s in dated}
+        counts: dict[str, int] = {}
+        for s in dated:
+            counts[s["day"]] = counts.get(s["day"], 0) + 1
+        spread = sorted(counts)
+        breakdown = ", ".join(f"{d}: {counts[d]}" for d in spread)
+
         if len(spread) < 2:
             problems.append(
-                f"every dated session landed on {spread.pop()} - day detection is wrong"
+                f"every dated session landed on {spread[0]} - day detection is wrong "
+                f"({breakdown})"
             )
-        biggest = max(sum(1 for s in dated if s["day"] == d) for d in spread)
-        if biggest > len(dated) * 0.9:
-            problems.append("over 90% of sessions on one day - day detection is suspect")
+        elif max(counts.values()) > len(dated) * 0.9:
+            problems.append(
+                f"over 90% of sessions on one day - day detection is suspect ({breakdown})"
+            )
+
+    undated = [s for s in sessions if s.get("scheduled") and not s.get("day")]
+    if undated and len(sessions) >= 40:
+        problems.append(
+            f"{len(undated)} sessions have a time but no day; the site publishes a day "
+            f"for every session, so this is a parser bug. Investigate with: "
+            f"python scripts/inspect_session.py {undated[0].get('id')}"
+        )
 
     bad_times = [
         s for s in scheduled
-        if not re.fullmatch(r"\d{2}:\d{2}", s["start"] or "")
-        or not re.fullmatch(r"\d{2}:\d{2}", s["end"] or "")
+        if not re.fullmatch(r"\d{2}:\d{2}", s.get("start") or "")
+        or not re.fullmatch(r"\d{2}:\d{2}", s.get("end") or "")
     ]
     if bad_times:
         problems.append(f"{len(bad_times)} sessions have malformed times")
@@ -603,6 +695,9 @@ def main() -> int:
     ap.add_argument("--force", action="store_true", help="refetch even if fresh")
     ap.add_argument("--check", action="store_true", help="parse and report, write nothing")
     ap.add_argument("--offline", action="store_true", help="never hit the network")
+    ap.add_argument("--resolve-days", action="store_true",
+                    help="always confirm every date from its session detail page "
+                         "(one request per session, slow but authoritative)")
     args = ap.parse_args()
 
     if args.offline:
@@ -640,6 +735,22 @@ def main() -> int:
 
     payload = build(pages)
     problems = validate(payload)
+
+    # The grid pages stack several programmes per document, so their day markers
+    # are unreliable. If the result looks wrong, resolve dates from each session's
+    # own page instead, which describes exactly one session.
+    day_trouble = [p for p in problems if "day detection" in p or "no day" in p]
+    if (day_trouble or args.resolve_days) and not args.offline:
+        print("\n  day detection looks unreliable; falling back to detail pages")
+        for p in day_trouble:
+            print(f"    - {p[:100]}")
+        only_missing = not bool([p for p in problems if "day detection is wrong" in p])
+        fixed = resolve_days_from_details(payload["sessions"], only_missing=only_missing)
+        if fixed:
+            payload["sessions"].sort(
+                key=lambda r: (r["day"] or "9999", r["start"] or "99:99", r["stage"] or "~")
+            )
+            problems = validate(payload)
 
     print("\n" + summarise(payload))
 

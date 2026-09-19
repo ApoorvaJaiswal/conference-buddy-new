@@ -61,17 +61,20 @@ docs rather than copying one from a tutorial; they change often.
 
 ```
 .devcontainer/            Codespaces: image, secrets, extensions
-  on-create.sh              slow setup — baked into prebuilds
-  post-create.sh            fast per-codespace checks
+  setup.sh                  idempotent setup; runs at create AND per codespace
+  verify.sh                  pass/fail checklist printed when you attach
 conference_buddy.ipynb    the workshop
 buddy/data.py             dataset access (imported, not taught)
 buddy/nb.py               display helpers: run(), show_workspace(), show_todos()
+buddy/config.py           paths and the default model string
 data/                     scraped agenda lands here (gitignored)
 seed/AGENTS.md            starting memory file for section 4
 seed/skills/              SKILL.md files for section 7, copied into workspace/
 workspace/                where the agent writes (gitignored)
 scripts/build_notebook.py regenerates the notebook — edit here, not the .ipynb
 scripts/fetch_agenda.py   scrapes the real agenda (runs at container start)
+scripts/inspect_session.py  shows where one session's date lives in the markup
+scripts/diagnose_schedule.py  shows whether a day is reachable at all
 tests/fixture.py          structural fixture for testing the parser offline
 ```
 
@@ -176,10 +179,11 @@ are applied only at container creation. Fix with Command Palette → *Codespaces
 Rebuild Container*, or just delete and recreate. The welcome banner in the
 terminal is the tell: no banner means the config never ran.
 
-**Slow setup lives in `onCreateCommand`, not `postCreateCommand`.** Only the
-former is baked into prebuild images; the latter reruns for every codespace even
-when restored from a prebuild. Putting `pip install` in the wrong one makes
-prebuilds pointless. If you add dependencies, add them to `on-create.sh`.
+**`setup.sh` runs at both `onCreateCommand` and `postCreateCommand`.** Only the
+first is baked into prebuild images; the second reruns for every codespace. The
+script is idempotent, so the first run does the work, the second is a fast no-op,
+and a stale prebuild or a failed step gets repaired rather than inherited. Add
+dependencies there.
 
 **Turn on prebuilds before the session.** Settings → Codespaces → Prebuild
 configuration, targeting `main` on the 2-core machine type. Without it every

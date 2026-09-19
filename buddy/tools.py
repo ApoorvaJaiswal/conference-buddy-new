@@ -23,8 +23,31 @@ except ImportError:
 
 from buddy import data
 
+NO_DATA = (
+    "The agenda data is not available (it has not been fetched, or the file was "
+    "removed). Tell the user, and suggest running: python scripts/fetch_agenda.py "
+    "--force . Do not answer agenda questions from memory."
+)
+
+
+def _safe(fn):
+    """A tool that raises hands the model a traceback. Return text instead."""
+    from functools import wraps
+
+    @wraps(fn)
+    def wrapper(*args, **kwargs):
+        try:
+            return fn(*args, **kwargs)
+        except FileNotFoundError:
+            return NO_DATA
+        except Exception as exc:                      # noqa: BLE001
+            return f"This tool failed: {type(exc).__name__}: {exc}. Tell the user."
+
+    return wrapper
+
 
 @tool
+@_safe
 def agenda_status() -> str:
     """What this agenda data covers and what it is missing. Call this first.
 
@@ -55,6 +78,7 @@ def agenda_status() -> str:
 
 
 @tool
+@_safe
 def list_program() -> str:
     """List the event, its days, tracks and stages as actually published."""
     ev = data.event()
@@ -71,6 +95,7 @@ def list_program() -> str:
 
 
 @tool
+@_safe
 def search_sessions(
     query: str = "",
     day: str = "",
@@ -132,6 +157,7 @@ def search_sessions(
             continue
         hits.append((score, s))
 
+    limit = max(1, min(int(limit or 12), 100))
     hits.sort(key=lambda h: (-h[0], h[1].get("day") or "9999", h[1].get("start") or "99:99"))
     if not hits:
         return "No sessions matched. Try broader keywords or drop a filter."
@@ -148,6 +174,7 @@ def search_sessions(
 
 
 @tool
+@_safe
 def get_session(session_id: str) -> str:
     """Full detail for one session: abstract, speakers, topics, time if published."""
     s = data.by_id(session_id)
@@ -185,6 +212,7 @@ def get_session(session_id: str) -> str:
 
 
 @tool
+@_safe
 def check_plan(session_ids: list[str]) -> str:
     """Check a draft schedule for time clashes.
 
@@ -195,6 +223,15 @@ def check_plan(session_ids: list[str]) -> str:
     This cannot tell you whether a transition between two rooms is physically
     possible: the conference publishes no floor plan or walking distances.
     """
+    # The same session listed twice is a duplicate, not a clash with itself.
+    seen_ids, deduped = set(), []
+    for sid in session_ids or []:
+        if sid not in seen_ids:
+            seen_ids.add(sid)
+            deduped.append(sid)
+    duplicates = len(list(session_ids or [])) - len(deduped)
+    session_ids = deduped
+
     picked, missing, unscheduled, undated = [], [], [], []
     for sid in session_ids:
         s = data.by_id(sid)
@@ -208,6 +245,8 @@ def check_plan(session_ids: list[str]) -> str:
             picked.append(s)
 
     notes = []
+    if duplicates:
+        notes.append(f"{duplicates} duplicate session id(s) ignored")
     if missing:
         notes.append(f"Unknown session IDs: {', '.join(missing)}")
     for s in unscheduled:
@@ -231,7 +270,12 @@ def check_plan(session_ids: list[str]) -> str:
                 )
 
     out = []
-    if clashes:
+    if not picked and (missing or unscheduled or undated):
+        out.append(
+            "Nothing could be checked - none of the ids given had both a published "
+            "time and a known day. Do not tell the user the plan is fine."
+        )
+    elif clashes:
         out.append("Clashes:\n" + "\n".join(f"- {c}" for c in clashes))
     else:
         out.append(f"No clashes among the {len(picked)} sessions with published times.")
@@ -245,6 +289,7 @@ def check_plan(session_ids: list[str]) -> str:
 
 
 @tool
+@_safe
 def refresh_agenda() -> str:
     """Re-fetch the agenda from wearedevelopers.com and reload it.
 

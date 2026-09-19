@@ -1,14 +1,17 @@
-"""Shared configuration. Every step imports MODEL from here."""
+"""Paths and model default. Small on purpose: the notebook selects its own
+model and prompts for keys in section 0, so this only holds what buddy/data.py
+and anything you build on top of it needs."""
 
 import os
-import sys
 from pathlib import Path
 
 try:
     from dotenv import load_dotenv
 
-    load_dotenv()
-except ImportError:  # pragma: no cover
+    # Explicit path: the default walks the call stack, which can fail when this
+    # module is imported from an unusual context.
+    load_dotenv(dotenv_path=Path(__file__).resolve().parent.parent / ".env")
+except Exception:  # pragma: no cover
     pass
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -23,26 +26,5 @@ WORKSPACE = REPO_ROOT / "workspace"
 #   BUDDY_MODEL=ollama:<model-id>
 MODEL = os.environ.get("BUDDY_MODEL", "anthropic:claude-sonnet-4-6")
 
-_KEY_FOR_PROVIDER = {
-    "anthropic": "ANTHROPIC_API_KEY",
-    "openai": "OPENAI_API_KEY",
-    "google_genai": "GOOGLE_API_KEY",
-    "groq": "GROQ_API_KEY",
-    "fireworks": "FIREWORKS_API_KEY",
-    "openrouter": "OPENROUTER_API_KEY",
-}
-
-
-def preflight() -> None:
-    """Fail loudly and usefully instead of deep inside a stack trace."""
-    provider = MODEL.split(":", 1)[0]
-    key = _KEY_FOR_PROVIDER.get(provider)
-    if key and not os.environ.get(key):
-        sys.exit(
-            f"\n  Model is '{MODEL}' but {key} is not set.\n"
-            f"  Copy .env.example to .env and add your key, or set BUDDY_MODEL\n"
-            f"  to a provider you do have a key for.\n"
-        )
-    if not DATA_FILE.exists():
-        sys.exit("\n  data/sessions.json is missing. Run: python scripts/fetch_agenda.py\n")
-    WORKSPACE.mkdir(exist_ok=True)
+# Kept deliberately small: the notebook does its own model selection and key
+# prompting in section 0, so this module only holds paths that buddy/data.py needs.

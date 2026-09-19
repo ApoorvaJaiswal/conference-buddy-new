@@ -77,11 +77,26 @@ def topics() -> list[str]:
 
 
 def by_id(session_id: str) -> dict | None:
-    return next((s for s in sessions() if s["id"] == str(session_id)), None)
+    """Look up by id. Tolerant of whitespace and brackets, which models emit."""
+    needle = str(session_id).strip().strip("[]()")
+    return next((s for s in sessions() if s["id"] == needle), None)
 
 
 def to_minutes(hhmm: str) -> int:
     return datetime.strptime(hhmm, "%H:%M").hour * 60 + datetime.strptime(hhmm, "%H:%M").minute
+
+
+def _span(session: dict) -> tuple[int, int]:
+    """Start and end in minutes, handling sessions that run past midnight.
+
+    The official party runs 20:00 to 00:30. Naive comparison makes its end time
+    earlier than its start, so it never overlapped anything and clashes with it
+    were silently missed.
+    """
+    start, end = to_minutes(session["start"]), to_minutes(session["end"])
+    if end <= start:
+        end += 24 * 60
+    return start, end
 
 
 def overlaps(a: dict, b: dict) -> bool:
@@ -90,10 +105,12 @@ def overlaps(a: dict, b: dict) -> bool:
         return False
     if a.get("day") != b.get("day") or a.get("day") is None:
         return False
-    return (
-        to_minutes(a["start"]) < to_minutes(b["end"])
-        and to_minutes(b["start"]) < to_minutes(a["end"])
-    )
+    try:
+        a_start, a_end = _span(a)
+        b_start, b_end = _span(b)
+    except (ValueError, TypeError):
+        return False        # malformed times are not a clash, they are unknown
+    return a_start < b_end and b_start < a_end
 
 
 def speaker_names(session: dict) -> str:

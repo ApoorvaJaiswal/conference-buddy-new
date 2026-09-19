@@ -83,11 +83,27 @@ def show_todos(state):
 
 
 def reset_workspace(root="workspace"):
-    """Wipe the agent's files so you can re-run a section cleanly."""
+    """Clear the agent's working files, then restore the seeded ones.
+
+    The seeds are inputs, not output: /AGENTS.md is the memory file section 4
+    edits, and /skills/ holds the SKILL.md files section 5 loads. Wiping them
+    breaks those sections, so they are copied back after the clear.
+    """
     import shutil
 
     root = Path(root)
+    seed = Path(__file__).resolve().parent.parent / "seed"
+
     if root.exists():
         shutil.rmtree(root)
     root.mkdir(parents=True, exist_ok=True)
-    print(f"{root}/ cleared")
+
+    restored = []
+    if (seed / "AGENTS.md").exists():
+        shutil.copy(seed / "AGENTS.md", root / "AGENTS.md")
+        restored.append("AGENTS.md")
+    if (seed / "skills").is_dir():
+        shutil.copytree(seed / "skills", root / "skills", dirs_exist_ok=True)
+        restored.append(f"skills/ ({len(list((seed / 'skills').glob('*')))} skills)")
+
+    print(f"{root}/ cleared" + (f", restored {', '.join(restored)}" if restored else ""))

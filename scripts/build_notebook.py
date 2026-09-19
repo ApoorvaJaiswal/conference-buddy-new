@@ -11,15 +11,26 @@ ROOT = Path(__file__).resolve().parent.parent
 CELLS = []
 
 
+def _cell_id(kind: str) -> str:
+    """Stable, deterministic ids so regenerating gives a clean diff."""
+    return f"{kind}-{len(CELLS):03d}"
+
+
 def md(text: str):
     CELLS.append(
-        {"cell_type": "markdown", "metadata": {}, "source": text.strip("\n").splitlines(True)}
+        {
+            "id": _cell_id("md"),
+            "cell_type": "markdown",
+            "metadata": {},
+            "source": text.strip("\n").splitlines(True),
+        }
     )
 
 
 def code(text: str):
     CELLS.append(
         {
+            "id": _cell_id("code"),
             "cell_type": "code",
             "execution_count": None,
             "metadata": {},
@@ -102,8 +113,11 @@ if not Path("buddy").exists():
 sys.path.insert(0, ".")
 
 try:
-    from dotenv import load_dotenv; load_dotenv()
-except ImportError:
+    # Explicit path: the default walks the call stack to find .env, which
+    # breaks in some execution contexts.
+    from dotenv import load_dotenv
+    load_dotenv(dotenv_path=Path(".env"))
+except Exception:
     pass
 
 # Pick your model. Any provider works.

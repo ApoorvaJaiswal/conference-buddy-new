@@ -160,6 +160,31 @@ def check_code():
     bad = [i for i, (_, src) in enumerate(cells) if _syntax_error(src)]
     check("every notebook code cell parses", not bad, f"cells {bad}")
 
+    ids = [c.get("id") for c in nb["cells"]]
+    check("every notebook cell has a unique id (nbformat 4.5 requirement)",
+          all(ids) and len(set(ids)) == len(ids),
+          f"{sum(1 for i in ids if not i)} missing, {len(ids) - len(set(ids))} duplicated")
+
+    # Dead modules rot: they stop being tested and start being copied from.
+    import subprocess as _sp
+    for mod in ["buddy/config.py", "buddy/nb.py", "buddy/tools.py", "buddy/data.py"]:
+        stem = Path(mod).stem
+        found = _sp.run(["grep", "-rl", f"buddy.{stem}\\|from buddy import", "--include=*.py",
+                         "--include=*.ipynb", str(ROOT)], capture_output=True, text=True).stdout
+        users = [f for f in found.split() if not f.endswith(mod)]
+        check(f"{mod} is actually used", bool(users), "nothing imports it")
+    # The README has drifted behind the code twice. Check its file tree resolves.
+    import re as _re
+    readme = (ROOT / "README.md").read_text()
+    claimed = set(_re.findall(r"^\s{0,2}([\w./-]+\.(?:py|sh|md|json|ipynb))\s{2,}", readme, _re.M))
+    claimed |= set(_re.findall(r"`(scripts/[\w.-]+\.py|buddy/[\w.-]+\.py|\.devcontainer/[\w.-]+\.sh)`", readme))
+    absent = sorted(c for c in claimed if not (ROOT / c).exists()
+                    and not list(ROOT.rglob(Path(c).name)))
+    check("README does not reference files that were removed", not absent, f"{absent}")
+
+    check("no orphaned buddy/run.py", not (ROOT / "buddy" / "run.py").exists(),
+          "superseded by buddy/nb.py")
+
     check(
         "notebook ships with no stale outputs",
         not any(c.get("outputs") for c in nb["cells"]),
@@ -342,6 +367,22 @@ def check_promises():
     for name, ok in promises.items():
         check(name, ok)
 
+    # reset_workspace() runs in section 0 and used to delete the seeded memory
+    # file and skills, breaking sections 4 and 5 for every attendee.
+    import shutil as _sh, tempfile as _tf
+    from buddy import nb as _nb
+    _tmp = Path(_tf.mkdtemp()) / "workspace"
+    _tmp.mkdir(parents=True)
+    (_tmp / "scratch.txt").write_text("x")
+    import io as _io, contextlib as _ctx
+    with _ctx.redirect_stdout(_io.StringIO()):
+        _nb.reset_workspace(str(_tmp))
+    check("reset_workspace clears scratch files", not (_tmp / "scratch.txt").exists())
+    check("reset_workspace restores the seeded memory file", (_tmp / "AGENTS.md").exists())
+    check("reset_workspace restores the seeded skills",
+          (_tmp / "skills" / "build-my-schedule" / "SKILL.md").exists())
+    _sh.rmtree(_tmp.parent, ignore_errors=True)
+
     # Skills must exist as real files, not just a parameter.
     skills = list((ROOT / "seed" / "skills").rglob("SKILL.md"))
     check("SKILL.md files ship with front matter", len(skills) >= 2 and all(
@@ -374,7 +415,41 @@ def check_tool_honesty():
     check("parser assigns real times and stages",
           any(s["scheduled"] and s["stage"] for s in payload["sessions"]))
     check("validation gates reject a thin parse", bool(fa.validate(payload)),
-          "a 4-session parse should fail the 40-session gate")
+          "a small parse should fail the 40-session gate")
+
+    # validate() runs on exactly the malformed input it exists to catch, so it
+    # must never raise. This crashed on a set it had mutated.
+    shapes = {
+        "all one day": {"sessions": [{"id": str(i), "title": "t", "scheduled": True,
+                                      "day": "2026-09-24", "start": "09:00", "end": "09:30",
+                                      "speakers": [{"name": "X"}]} for i in range(50)]},
+        "timed undated": {"sessions": [{"id": str(i), "title": "t", "scheduled": True,
+                                        "day": None, "start": "09:00", "end": "09:30",
+                                        "speakers": [{"name": "X"}]} for i in range(50)]},
+        "missing keys": {"sessions": [{"id": "1"} for _ in range(50)]},
+        "empty": {"sessions": []},
+        "no key": {},
+    }
+    crashed = []
+    for label, shape in shapes.items():
+        try:
+            fa.validate(shape)
+        except Exception as exc:
+            crashed.append(f"{label}: {type(exc).__name__}")
+    check("validate() never raises on malformed input", not crashed, f"{crashed}")
+    # Detail-page resolution is the fallback when grid markup defeats us.
+    for label, html, want in [
+        ("JSON-LD", '{"startDate":"2026-09-23T13:15:00"}', "2026-09-23"),
+        ("<time> attr", '<time datetime="2026-09-24T11:40">x</time>', "2026-09-24"),
+        ("data-date", '<div data-date="2026-09-25">x</div>', "2026-09-25"),
+        ("visible text", "<p>Wed, Sep 23</p>", "2026-09-23"),
+        ("no date", "<p>nothing</p>", None),
+    ]:
+        check(f"detail-page date from {label}", fa.day_from_detail_page(html) == want,
+              f"got {fa.day_from_detail_page(html)!r}, wanted {want!r}")
+
+    check("single-day parse is caught as a bug",
+          any("day detection is wrong" in p for p in fa.validate(shapes["all one day"])))
 
     # Drive the real tools over a session with no published time.
     unscheduled = dict(payload["sessions"][0])
@@ -429,8 +504,55 @@ def check_tool_honesty():
         check("pre-registration surfaced", "PRE-REGISTRATION REQUIRED" in ws, ws[:80])
         check("list_program advertises available formats", "Formats:" in list_program.invoke({}))
 
+        # --- edge cases found by adversarial probing ---
+        bad_row = ('<a href="/agenda/sessions/x-111111">13:70 PM-14:00 PM Stage 1</a>'
+                   '<a href="/agenda/sessions/y-222222">9:45 AM-10:15 AM Mainstage</a>')
+        try:
+            parsed = fa.parse_schedule_page(bad_row)
+            ok = "111111" not in parsed and "222222" in parsed
+        except Exception:
+            ok = False
+        check("one malformed time does not abort the page parse", ok)
+
+        first = payload["sessions"][0]["id"]
+        dup = check_plan.invoke({"session_ids": [first, first]})
+        check("a duplicate id is not reported as a clash with itself",
+              "duplicate" in dup and "CLASH" not in dup, dup[:90])
+
+        party = {"scheduled": True, "day": "2026-09-24", "start": "20:00", "end": "00:30"}
+        late = {"scheduled": True, "day": "2026-09-24", "start": "23:00", "end": "23:45"}
+        early = {"scheduled": True, "day": "2026-09-24", "start": "18:00", "end": "19:00"}
+        check("a session crossing midnight still detects clashes",
+              data.overlaps(party, late) and not data.overlaps(party, early))
+
+        check("search limits are clamped, not used as negative slices",
+              len(search_sessions.invoke({"query": "", "limit": -1}).splitlines()) == 1)
+
+        check("session ids tolerate whitespace and brackets",
+              all("No session with id" not in get_session.invoke({"session_id": v})
+                  for v in [f" {first} ", f"[{first}]", first]))
+        bad_only = check_plan.invoke({"session_ids": ["nope"]})
+        check("check_plan does not say 'no clashes' when nothing was checkable",
+              "Nothing could be checked" in bad_only, bad_only[:80])
+
         status = agenda_status.invoke({})
         check("agenda_status lists its own gaps", "Known gaps" in status)
+        # A tool must never raise: the model gets a traceback it cannot act on.
+        (ROOT / "data" / "sessions.json").unlink(missing_ok=True)
+        data.reload()
+        raised = []
+        for name, fn, arg in [("agenda_status", agenda_status, {}),
+                              ("search_sessions", search_sessions, {"query": "ai"}),
+                              ("get_session", get_session, {"session_id": "1"}),
+                              ("check_plan", check_plan, {"session_ids": ["1"]})]:
+            try:
+                out = fn.invoke(arg)
+                if "not available" not in out:
+                    raised.append(f"{name}: unhelpful output")
+            except Exception as exc:
+                raised.append(f"{name}: {type(exc).__name__}")
+        check("tools return text instead of raising when data is missing",
+              not raised, f"{raised}")
     finally:
         (ROOT / "data" / "sessions.json").unlink(missing_ok=True)
 
